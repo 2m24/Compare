@@ -3,10 +3,10 @@ import { Loader2 } from "lucide-react";
 import Header from "./components/Header";
 import FileUpload from "./components/FileUpload";
 import DocumentPreview from "./components/DocumentPreview";
-import UnifiedMiniMap from "./components/MiniMap";
 import ComparisonSummary from "./components/ComparisonSummary";
 import DetailedReport from "./components/DetailedReport";
 import { compareHtmlDocuments } from "./utils/textComparison";
+import { renderHighlightedModifiedDocument } from "./utils/textComparison";
 import {
   exportComparisonResults,
   exportAsHtml,
@@ -69,17 +69,33 @@ function App() {
 
   const handleExportResults = useCallback(() => {
     if (!comparison || !leftDocument || !rightDocument) return;
-    exportComparisonResults(comparison, leftDocument, rightDocument);
+    // Create export data with highlighted modified document
+    const highlightedContent = renderHighlightedModifiedDocument(comparison.modifiedDocumentHighlighted);
+    const exportData = {
+      ...comparison,
+      highlightedModifiedDocument: highlightedContent
+    };
+    exportComparisonResults(exportData, leftDocument, rightDocument);
   }, [comparison, leftDocument, rightDocument]);
 
   const handleExportHtml = useCallback(() => {
     if (!comparison || !leftDocument || !rightDocument) return;
-    exportAsHtml(comparison, leftDocument, rightDocument);
+    const highlightedContent = renderHighlightedModifiedDocument(comparison.modifiedDocumentHighlighted);
+    const exportData = {
+      ...comparison,
+      highlightedModifiedDocument: highlightedContent
+    };
+    exportAsHtml(exportData, leftDocument, rightDocument);
   }, [comparison, leftDocument, rightDocument]);
 
   const handleExportPdf = useCallback(() => {
     if (!comparison || !leftDocument || !rightDocument) return;
-    exportAsPdf(comparison, leftDocument, rightDocument);
+    const highlightedContent = renderHighlightedModifiedDocument(comparison.modifiedDocumentHighlighted);
+    const exportData = {
+      ...comparison,
+      highlightedModifiedDocument: highlightedContent
+    };
+    exportAsPdf(exportData, leftDocument, rightDocument);
   }, [comparison, leftDocument, rightDocument]);
 
   const clearDocuments = useCallback(() => {
@@ -183,107 +199,70 @@ function App() {
               onExportPdf={handleExportPdf}
             />
 
-            {/* Document Comparison View */}
-            <div className="grid grid-cols-[1fr_30px_1fr] gap-4 h-[90vh]">
+            {/* Single Modified Document with Highlights */}
+            <div className="max-w-6xl mx-auto">
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-4">
+                <h3 className="text-lg font-semibold text-gray-800 mb-2">
+                  Modified Document with Changes Highlighted
+                </h3>
+                <p className="text-sm text-gray-600">
+                  Only the differences are highlighted in the modified document. 
+                  Yellow background shows added/modified content, red strike-through shows removed content.
+                </p>
+              </div>
+              
               <DocumentPreview
-                document={leftDocument}
-                diffs={comparison.leftDiffs}
-                title="Original Document"
-                containerId="left-preview-container"
-              />
 
-              <UnifiedScrollBar
-                leftContainerId="left-preview-container"
-                rightContainerId="right-preview-container"
-              />
 
-              <DocumentPreview
                 document={rightDocument}
-                diffs={comparison.rightDiffs}
-                title="Modified Document"
-                containerId="right-preview-container"
+                highlightedContent={renderHighlightedModifiedDocument(comparison.modifiedDocumentHighlighted)}
+                title="Modified Document with Highlights"
+                containerId="highlighted-document-container"
+                isModifiedWithHighlights={true}
               />
             </div>
 
-            {showDetailed && <DetailedReport report={comparison.detailed} />}
+            {showDetailed && comparison.detailed && <DetailedReport report={comparison.detailed} />}
 
             {/* Legend */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
               <h4 className="text-sm font-semibold text-gray-700 mb-3">
-                Line-by-Line Comparison Legend
+                Highlighting Legend
               </h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                <div className="space-y-3">
-                  <h5 className="font-medium text-gray-700">
-                    Content Changes
-                  </h5>
-                  <div className="flex items-center gap-2">
-                    <span className="bg-green-200 text-green-800 px-2 py-1 rounded flex items-center gap-1">
-                      <span className="w-4 h-4 bg-green-600 text-white rounded-full flex items-center justify-center text-xs font-bold">+</span>
-                      Added text
-                    </span>
-                    <span className="text-gray-600">
-                      Content added in modified document
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="bg-red-200 text-red-800 px-2 py-1 rounded line-through flex items-center gap-1">
-                      <span className="w-4 h-4 bg-red-600 text-white rounded-full flex items-center justify-center text-xs font-bold">−</span>
-                      Deleted text
-                    </span>
-                    <span className="text-gray-600">
-                      Content removed from original document
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="bg-yellow-200 text-yellow-800 px-2 py-1 rounded flex items-center gap-1">
-                      <span className="w-4 h-4 bg-yellow-600 text-white rounded-full flex items-center justify-center text-xs font-bold">~</span>
-                      Modified text
-                    </span>
-                    <span className="text-gray-600">
-                      Content modified between documents
-                    </span>
-                  </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="bg-yellow-200 text-yellow-800 px-3 py-2 rounded border-l-4 border-yellow-500">
+                    Added/Modified Content
+                  </span>
+                  <span className="text-gray-600">
+                    New or changed content
+                  </span>
                 </div>
-
-                <div className="space-y-3">
-                  <h5 className="font-medium text-gray-700">
-                    Alignment & Placeholders
-                  </h5>
-                  <div className="flex items-center gap-2">
-                    <span className="bg-green-100 text-green-700 px-2 py-1 rounded border-2 border-dashed border-green-500">
-                      Addition Placeholder
-                    </span>
-                    <span className="text-gray-600">
-                      Shows where content was added
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="bg-red-100 text-red-700 px-2 py-1 rounded border-2 border-dashed border-red-500">
-                      Removal Placeholder
-                    </span>
-                    <span className="text-gray-600">
-                      Shows where content was removed
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="bg-gray-100 text-gray-600 px-2 py-1 rounded border border-gray-400">
-                      Unchanged Content
-                    </span>
-                    <span className="text-gray-600">
-                      Original formatting preserved
-                    </span>
-                  </div>
+                <div className="flex items-center gap-2">
+                  <span className="bg-red-200 text-red-800 px-3 py-2 rounded border-l-4 border-red-500 line-through">
+                    Removed Content
+                  </span>
+                  <span className="text-gray-600">
+                    Content that was deleted
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="bg-gray-100 text-gray-700 px-3 py-2 rounded border border-gray-300">
+                    Unchanged Content
+                  </span>
+                  <span className="text-gray-600">
+                    No highlighting applied
+                  </span>
                 </div>
               </div>
-              <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+              <div className="mt-4 p-3 bg-green-50 rounded-lg border border-green-200">
                 <div className="flex items-center gap-2 text-indigo-700 text-sm">
-                  <span className="font-medium">💡 Line-by-Line Comparison:</span>
+                  <span className="font-medium">✅ Modified Document Only:</span>
                 </div>
-                <div className="mt-1 text-sm text-blue-600">
-                  Both documents show all changes with precise highlighting while preserving
-                  the exact formatting, layout, and structure of the original documents.
-                  Placeholders maintain alignment so you can see changes in context.
+                <div className="mt-1 text-sm text-green-600">
+                  Only the modified document is shown with changes highlighted. The original 
+                  formatting, layout, width, and height are preserved exactly as they appear 
+                  in the modified document.
                 </div>
               </div>
             </div>

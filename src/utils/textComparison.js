@@ -1,8 +1,8 @@
 import DiffMatchPatch from 'diff-match-patch';
 
-// Enhanced comparison function that creates mutual comparison with precise highlighting
+// Enhanced comparison function that highlights changes only in the modified document
 export const compareHtmlDocuments = async (leftHtml, rightHtml) => {
-  console.log("Starting enhanced mutual comparison...");
+  console.log("Starting comparison for modified document highlighting...");
   
   try {
     // Parse HTML content into structured segments
@@ -12,24 +12,17 @@ export const compareHtmlDocuments = async (leftHtml, rightHtml) => {
     console.log(`Left document: ${leftSegments.length} segments`);
     console.log(`Right document: ${rightSegments.length} segments`);
     
-    // Create mutual diff that shows all changes in both documents
-    const mutualDiff = createMutualDiff(leftSegments, rightSegments);
-    
-    // Generate highlighted versions for both documents
-    const leftDiffs = generateMutualHighlighting(mutualDiff.leftResult, 'left');
-    const rightDiffs = generateMutualHighlighting(mutualDiff.rightResult, 'right');
+    // Create diff that shows changes only in the modified document
+    const modifiedDocumentWithHighlights = createModifiedDocumentHighlights(leftSegments, rightSegments);
     
     // Calculate summary statistics
-    const summary = calculateMutualSummary(mutualDiff);
-    
-    // Generate detailed report
-    const detailed = generateDetailedReport(mutualDiff);
+    const summary = calculateSummary(modifiedDocumentWithHighlights);
     
     return {
-      leftDiffs,
-      rightDiffs,
+      modifiedDocumentHighlighted: modifiedDocumentWithHighlights,
       summary,
-      detailed
+      originalDocument: leftHtml, // Keep original unchanged
+      modifiedDocument: rightHtml // Keep modified unchanged for reference
     };
   } catch (error) {
     console.error("Comparison failed:", error);
@@ -37,7 +30,7 @@ export const compareHtmlDocuments = async (leftHtml, rightHtml) => {
   }
 };
 
-// Parse HTML into meaningful segments (paragraphs, headings, lists, tables, etc.)
+// Parse HTML into meaningful segments
 function parseHtmlIntoSegments(html) {
   if (!html) return [];
   
@@ -45,52 +38,47 @@ function parseHtmlIntoSegments(html) {
   const doc = parser.parseFromString(html, 'text/html');
   const segments = [];
   
-  // Get all block-level elements that represent meaningful content units
-  const blockElements = doc.body.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, td, th, div, blockquote, pre');
-  
-  blockElements.forEach((element, index) => {
-    const text = element.textContent?.trim();
-    if (text) {
-      segments.push({
-        id: index,
-        type: getElementType(element),
-        tagName: element.tagName.toLowerCase(),
-        text: text,
-        html: element.outerHTML,
-        styles: element.getAttribute('style') || '',
-        className: element.className || '',
-        parent: element.parentElement?.tagName.toLowerCase() || null,
-        isTableCell: ['td', 'th'].includes(element.tagName.toLowerCase()),
-        isListItem: element.tagName.toLowerCase() === 'li',
-        isHeading: /^h[1-6]$/.test(element.tagName.toLowerCase())
-      });
+  // Get all meaningful content elements in document order
+  const walker = document.createTreeWalker(
+    doc.body,
+    NodeFilter.SHOW_ELEMENT,
+    {
+      acceptNode: function(node) {
+        const tagName = node.tagName.toLowerCase();
+        // Accept block-level elements and meaningful inline elements
+        if (['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'td', 'th', 'div', 'blockquote', 'pre', 'img', 'table', 'tr'].includes(tagName)) {
+          return NodeFilter.FILTER_ACCEPT;
+        }
+        return NodeFilter.FILTER_SKIP;
+      }
     }
-  });
+  );
   
-  // Also capture images and other media elements
-  const mediaElements = doc.body.querySelectorAll('img, table, hr');
-  mediaElements.forEach((element, index) => {
+  let node;
+  let index = 0;
+  while (node = walker.nextNode()) {
+    const text = node.textContent?.trim();
+    const tagName = node.tagName.toLowerCase();
+    
+    // Skip empty elements except images and tables
+    if (!text && !['img', 'table', 'tr'].includes(tagName)) continue;
+    
     segments.push({
-      id: `media_${index}`,
-      type: 'media',
-      tagName: element.tagName.toLowerCase(),
-      text: element.alt || element.title || `[${element.tagName.toLowerCase()}]`,
-      html: element.outerHTML,
-      styles: element.getAttribute('style') || '',
-      className: element.className || '',
-      isMedia: true
+      id: index++,
+      type: getElementType(node),
+      tagName: tagName,
+      text: text || '',
+      html: node.outerHTML,
+      element: node.cloneNode(true),
+      styles: node.getAttribute('style') || '',
+      className: node.className || ''
     });
-  });
+  }
   
-  return segments.sort((a, b) => {
-    // Sort by document order
-    const aPos = a.html.indexOf(a.text);
-    const bPos = b.html.indexOf(b.text);
-    return aPos - bPos;
-  });
+  return segments;
 }
 
-// Determine element type for better categorization
+// Determine element type
 function getElementType(element) {
   const tagName = element.tagName.toLowerCase();
   
@@ -98,184 +86,143 @@ function getElementType(element) {
   if (tagName === 'p') return 'paragraph';
   if (tagName === 'li') return 'listItem';
   if (['td', 'th'].includes(tagName)) return 'tableCell';
+  if (tagName === 'img') return 'image';
+  if (tagName === 'table') return 'table';
+  if (tagName === 'tr') return 'tableRow';
   if (tagName === 'blockquote') return 'quote';
   if (tagName === 'pre') return 'preformatted';
-  if (tagName === 'div') return 'block';
   
-  return 'text';
+  return 'block';
 }
 
-// Create mutual diff that shows all changes in both documents
-function createMutualDiff(leftSegments, rightSegments) {
-  const leftResult = [];
-  const rightResult = [];
+// Create highlighted version of modified document only
+function createModifiedDocumentHighlights(leftSegments, rightSegments) {
   const dmp = new DiffMatchPatch();
+  const highlightedSegments = [];
   
   let leftIndex = 0;
   let rightIndex = 0;
   
-  while (leftIndex < leftSegments.length || rightIndex < rightSegments.length) {
-    const leftSegment = leftSegments[leftIndex];
+  while (rightIndex < rightSegments.length) {
     const rightSegment = rightSegments[rightIndex];
+    const leftSegment = leftSegments[leftIndex];
     
     if (!leftSegment) {
-      // Only right segments remaining - additions
-      rightResult.push({
-        ...rightSegment,
-        operation: 'added',
-        changeType: 'structural_add',
-        highlighted: true
-      });
-      leftResult.push(createPlaceholder('added', rightSegment));
+      // Only right segments remaining - these are additions
+      highlightedSegments.push(createHighlightedSegment(rightSegment, 'added'));
       rightIndex++;
-    } else if (!rightSegment) {
-      // Only left segments remaining - deletions
-      leftResult.push({
-        ...leftSegment,
-        operation: 'removed',
-        changeType: 'structural_remove',
-        highlighted: true
-      });
-      rightResult.push(createPlaceholder('removed', leftSegment));
-      leftIndex++;
-    } else if (leftSegment.text === rightSegment.text && leftSegment.tagName === rightSegment.tagName) {
-      // Identical content and structure
-      leftResult.push({
-        ...leftSegment,
-        operation: 'unchanged',
-        highlighted: false
-      });
-      rightResult.push({
-        ...rightSegment,
-        operation: 'unchanged',
-        highlighted: false
-      });
-      leftIndex++;
-      rightIndex++;
-    } else if (leftSegment.tagName === rightSegment.tagName) {
-      // Same element type but different content - word-level diff
-      const wordDiff = createWordLevelDiff(leftSegment.text, rightSegment.text, dmp);
-      
-      leftResult.push({
-        ...leftSegment,
-        operation: 'modified',
-        changeType: 'content_change',
-        highlighted: true,
-        wordDiff: wordDiff.left,
-        originalText: leftSegment.text
-      });
-      rightResult.push({
-        ...rightSegment,
-        operation: 'modified',
-        changeType: 'content_change',
-        highlighted: true,
-        wordDiff: wordDiff.right,
-        originalText: rightSegment.text
-      });
+    } else if (rightSegment.text === leftSegment.text && rightSegment.tagName === leftSegment.tagName) {
+      // Identical content - no highlighting needed
+      highlightedSegments.push(createHighlightedSegment(rightSegment, 'unchanged'));
       leftIndex++;
       rightIndex++;
     } else {
-      // Different element types - check if content exists elsewhere
-      const rightMatch = findMatchingSegment(leftSegment, rightSegments, rightIndex + 1);
-      const leftMatch = findMatchingSegment(rightSegment, leftSegments, leftIndex + 1);
+      // Check if this right segment exists later in left (it's an addition)
+      const foundInLeft = findSegmentInArray(rightSegment, leftSegments, leftIndex + 1);
       
-      if (rightMatch !== -1 && (leftMatch === -1 || rightMatch < leftMatch)) {
-        // Left segment appears later in right - current right is addition
-        rightResult.push({
-          ...rightSegment,
-          operation: 'added',
-          changeType: 'structural_add',
-          highlighted: true
-        });
-        leftResult.push(createPlaceholder('added', rightSegment));
-        rightIndex++;
-      } else if (leftMatch !== -1) {
-        // Right segment appears later in left - current left is deletion
-        leftResult.push({
-          ...leftSegment,
-          operation: 'removed',
-          changeType: 'structural_remove',
-          highlighted: true
-        });
-        rightResult.push(createPlaceholder('removed', leftSegment));
-        leftIndex++;
+      if (foundInLeft === -1) {
+        // Check if current left segment exists later in right (current right is modified/added)
+        const leftInRight = findSegmentInArray(leftSegment, rightSegments, rightIndex + 1);
+        
+        if (leftInRight !== -1) {
+          // Current right is an addition, left segment appears later
+          highlightedSegments.push(createHighlightedSegment(rightSegment, 'added'));
+          rightIndex++;
+        } else {
+          // Content is modified - do word-level diff
+          const wordDiff = createWordLevelDiff(leftSegment.text, rightSegment.text, dmp);
+          highlightedSegments.push(createHighlightedSegment(rightSegment, 'modified', wordDiff));
+          leftIndex++;
+          rightIndex++;
+        }
       } else {
-        // Both are unique - treat as replacement
-        leftResult.push({
-          ...leftSegment,
-          operation: 'removed',
-          changeType: 'replacement',
-          highlighted: true
-        });
-        rightResult.push({
-          ...rightSegment,
-          operation: 'added',
-          changeType: 'replacement',
-          highlighted: true
-        });
+        // Right segment exists in left - it's unchanged
+        highlightedSegments.push(createHighlightedSegment(rightSegment, 'unchanged'));
         leftIndex++;
         rightIndex++;
       }
     }
   }
   
-  return { leftResult, rightResult };
+  return highlightedSegments;
 }
 
-// Find matching segment in array
-function findMatchingSegment(segment, segments, startIndex) {
+// Find segment in array
+function findSegmentInArray(segment, segments, startIndex) {
   for (let i = startIndex; i < segments.length; i++) {
     if (segments[i].text === segment.text && segments[i].tagName === segment.tagName) {
-      return i - startIndex;
+      return i;
     }
   }
   return -1;
 }
 
-// Create placeholder for alignment
-function createPlaceholder(type, originalSegment) {
+// Create highlighted segment
+function createHighlightedSegment(segment, changeType, wordDiff = null) {
+  let highlightedHtml = segment.html;
+  
+  if (changeType === 'added') {
+    // Highlight entire element as added
+    highlightedHtml = addHighlightToElement(segment.html, 'highlight-added');
+  } else if (changeType === 'modified' && wordDiff) {
+    // Replace text content with word-level diff
+    highlightedHtml = segment.html.replace(segment.text, wordDiff);
+    highlightedHtml = addHighlightToElement(highlightedHtml, 'highlight-modified');
+  } else if (changeType === 'removed') {
+    // Show removed content with strike-through
+    highlightedHtml = addHighlightToElement(segment.html, 'highlight-removed');
+  }
+  // For 'unchanged', keep original HTML
+  
   return {
-    id: `placeholder_${originalSegment.id}`,
-    type: 'placeholder',
-    tagName: originalSegment.tagName,
-    text: '',
-    html: `<div class="git-line-placeholder placeholder-${type}"></div>`,
-    operation: 'placeholder',
-    changeType: `placeholder_${type}`,
-    highlighted: true,
-    placeholderFor: type,
-    originalSegment
+    ...segment,
+    changeType,
+    highlightedHtml,
+    originalHtml: segment.html
   };
 }
 
-// Create word-level diff for content changes
+// Add highlight class to HTML element
+function addHighlightToElement(html, className) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<div>${html}</div>`, 'text/html');
+  const container = doc.querySelector('div');
+  
+  if (container && container.firstElementChild) {
+    const element = container.firstElementChild;
+    element.classList.add(className);
+    return element.outerHTML;
+  }
+  
+  return `<div class="${className}">${html}</div>`;
+}
+
+// Create word-level diff for modified content
 function createWordLevelDiff(leftText, rightText, dmp) {
   const diff = dmp.diff_main(leftText, rightText);
   dmp.diff_cleanupSemantic(diff);
   
-  let leftHtml = '';
-  let rightHtml = '';
+  let result = '';
   
   diff.forEach(([operation, text]) => {
     const escapedText = escapeHtml(text);
     
     switch (operation) {
       case DiffMatchPatch.DIFF_EQUAL:
-        leftHtml += escapedText;
-        rightHtml += escapedText;
+        result += escapedText;
         break;
       case DiffMatchPatch.DIFF_DELETE:
-        leftHtml += `<span class="git-inline-removed">${escapedText}</span>`;
-        rightHtml += `<span class="git-inline-placeholder">[removed: ${escapedText.substring(0, 20)}${escapedText.length > 20 ? '...' : ''}]</span>`;
+        // Show removed text with strike-through in modified document
+        result += `<span class="inline-removed">${escapedText}</span>`;
         break;
       case DiffMatchPatch.DIFF_INSERT:
-        leftHtml += `<span class="git-inline-placeholder">[added: ${escapedText.substring(0, 20)}${escapedText.length > 20 ? '...' : ''}]</span>`;
-        rightHtml += `<span class="git-inline-added">${escapedText}</span>`;
+        // Show added text with highlight in modified document
+        result += `<span class="inline-added">${escapedText}</span>`;
         break;
     }
   });
   
-  return { left: leftHtml, right: rightHtml };
+  return result;
 }
 
 // Escape HTML characters
@@ -285,62 +232,8 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-// Generate mutual highlighting for both documents
-function generateMutualHighlighting(segments, side) {
-  return segments.map(segment => {
-    let content = '';
-    
-    if (segment.operation === 'placeholder') {
-      // Create placeholder with appropriate styling
-      content = `<div class="git-line-placeholder ${segment.placeholderFor === 'added' ? 'placeholder-added' : 'placeholder-removed'}">
-        <span style="color: #6b7280; font-style: italic; font-size: 0.9em;">
-          ${segment.placeholderFor === 'added' ? '+ Content added in modified document' : '- Content removed from original document'}
-        </span>
-      </div>`;
-    } else if (segment.operation === 'unchanged') {
-      // Unchanged content - preserve original formatting
-      content = segment.html;
-    } else if (segment.operation === 'added') {
-      // Added content - highlight with green
-      content = addHighlightingToHtml(segment.html, 'git-line-added');
-    } else if (segment.operation === 'removed') {
-      // Removed content - highlight with red and strike-through
-      content = addHighlightingToHtml(segment.html, 'git-line-removed');
-    } else if (segment.operation === 'modified') {
-      // Modified content - use word-level diff
-      const modifiedHtml = segment.html.replace(
-        segment.originalText,
-        segment.wordDiff
-      );
-      content = addHighlightingToHtml(modifiedHtml, 'git-line-modified');
-    }
-    
-    return {
-      content,
-      type: segment.operation || 'unchanged',
-      changeType: segment.changeType || 'none',
-      elementType: segment.type,
-      tagName: segment.tagName
-    };
-  });
-}
-
-// Add highlighting classes to HTML
-function addHighlightingToHtml(html, className) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(`<div>${html}</div>`, 'text/html');
-  const container = doc.querySelector('div');
-  
-  if (container && container.firstElementChild) {
-    container.firstElementChild.classList.add(className);
-    return container.innerHTML;
-  }
-  
-  return `<div class="${className}">${html}</div>`;
-}
-
 // Calculate summary statistics
-function calculateMutualSummary(mutualDiff) {
+function calculateSummary(highlightedSegments) {
   const stats = {
     additions: 0,
     deletions: 0,
@@ -348,17 +241,17 @@ function calculateMutualSummary(mutualDiff) {
     changes: 0
   };
   
-  mutualDiff.rightResult.forEach(segment => {
-    if (segment.operation === 'added') {
-      stats.additions++;
-    } else if (segment.operation === 'modified') {
-      stats.modifications++;
-    }
-  });
-  
-  mutualDiff.leftResult.forEach(segment => {
-    if (segment.operation === 'removed') {
-      stats.deletions++;
+  highlightedSegments.forEach(segment => {
+    switch (segment.changeType) {
+      case 'added':
+        stats.additions++;
+        break;
+      case 'removed':
+        stats.deletions++;
+        break;
+      case 'modified':
+        stats.modifications++;
+        break;
     }
   });
   
@@ -367,80 +260,11 @@ function calculateMutualSummary(mutualDiff) {
   return stats;
 }
 
-// Generate detailed report
-function generateDetailedReport(mutualDiff) {
-  const lines = [];
-  const tables = [];
-  const images = [];
+// Render the highlighted modified document
+export const renderHighlightedModifiedDocument = (highlightedSegments) => {
+  if (!highlightedSegments || highlightedSegments.length === 0) return '';
   
-  // Process line-by-line changes
-  mutualDiff.leftResult.forEach((leftSeg, index) => {
-    const rightSeg = mutualDiff.rightResult[index];
-    
-    if (!leftSeg || !rightSeg) return;
-    
-    let status = 'UNCHANGED';
-    let diffHtml = '';
-    let formatChanges = [];
-    
-    if (leftSeg.operation === 'removed' && rightSeg.operation === 'placeholder') {
-      status = 'REMOVED';
-      diffHtml = `<span class="git-inline-removed">${escapeHtml(leftSeg.text)}</span>`;
-    } else if (leftSeg.operation === 'placeholder' && rightSeg.operation === 'added') {
-      status = 'ADDED';
-      diffHtml = `<span class="git-inline-added">${escapeHtml(rightSeg.text)}</span>`;
-    } else if (leftSeg.operation === 'modified' && rightSeg.operation === 'modified') {
-      status = 'MODIFIED';
-      diffHtml = rightSeg.wordDiff || escapeHtml(rightSeg.text);
-      
-      // Check for formatting changes
-      if (leftSeg.styles !== rightSeg.styles) {
-        formatChanges.push('Style changes detected');
-      }
-      if (leftSeg.className !== rightSeg.className) {
-        formatChanges.push('Class changes detected');
-      }
-    } else if (leftSeg.operation === 'unchanged') {
-      status = 'UNCHANGED';
-      diffHtml = escapeHtml(leftSeg.text);
-    }
-    
-    lines.push({
-      v1: index + 1,
-      v2: index + 1,
-      status,
-      diffHtml,
-      formatChanges
-    });
-    
-    // Track table changes
-    if (leftSeg.isTableCell || rightSeg.isTableCell) {
-      tables.push({
-        status,
-        table: 1,
-        row: Math.floor(index / 3) + 1,
-        col: (index % 3) + 1,
-        diffHtml
-      });
-    }
-    
-    // Track image changes
-    if (leftSeg.isMedia || rightSeg.isMedia) {
-      images.push({
-        status,
-        index: index + 1
-      });
-    }
-  });
-  
-  return { lines, tables, images };
-}
-
-// Render HTML differences
-export const renderHtmlDifferences = (diffs) => {
-  if (!diffs || diffs.length === 0) return '';
-  
-  return diffs.map(diff => diff.content || '').join('\n');
+  return highlightedSegments.map(segment => segment.highlightedHtml || segment.html).join('\n');
 };
 
 // Export for compatibility

@@ -1,15 +1,16 @@
 import React, { useEffect, useRef } from 'react';
-import { renderHtmlDifferences } from '../utils/textComparison';
+import { renderHighlightedModifiedDocument } from '../utils/textComparison';
 
-const DocumentPreview = ({ document, diffs, title, containerId }) => {
+const DocumentPreview = ({ document, highlightedContent, title, containerId, isModifiedWithHighlights = false }) => {
   const contentRef = useRef(null);
   const containerRef = useRef(null);
 
-  const content = diffs ? renderHtmlDifferences(diffs) : document.originalHtmlContent;
+  // Use highlighted content if provided, otherwise use original document content
+  const content = highlightedContent || document.originalHtmlContent;
 
   // Handle scroll synchronization between containers
   useEffect(() => {
-    if (!containerRef.current || !containerId || diffs) return; // Disable sync when showing diffs
+    if (!containerRef.current || !containerId || isModifiedWithHighlights) return; // Disable sync when showing highlights
 
     const container = containerRef.current;
     let isSyncing = false;
@@ -52,7 +53,7 @@ const DocumentPreview = ({ document, diffs, title, containerId }) => {
     return () => {
       container.removeEventListener('scroll', handleScroll);
     };
-  }, [containerId, diffs]);
+  }, [containerId, isModifiedWithHighlights]);
 
   // Auto-scale content to fit container width while preserving proportions
   useEffect(() => {
@@ -68,12 +69,15 @@ const DocumentPreview = ({ document, diffs, title, containerId }) => {
       // Reset transform to measure natural size
       content.style.transform = 'none';
       content.style.width = 'auto';
+      content.style.minWidth = 'auto';
+      content.style.maxWidth = 'none';
       
       // Measure content and container
       const contentWidth = content.scrollWidth;
       const containerWidth = container.clientWidth - 32; // Account for padding
       
-      if (contentWidth > containerWidth) {
+      // Only scale down if content is wider than container, never scale up
+      if (contentWidth > containerWidth && containerWidth > 0) {
         const scale = containerWidth / contentWidth;
         content.style.transform = `scale(${scale})`;
         content.style.transformOrigin = 'top left';
@@ -83,8 +87,10 @@ const DocumentPreview = ({ document, diffs, title, containerId }) => {
         const scaledHeight = content.scrollHeight * scale;
         content.style.height = `${content.scrollHeight}px`;
       } else {
+        // Don't scale - maintain original size
         content.style.transform = 'none';
         content.style.width = '100%';
+        content.style.minWidth = '100%';
         content.style.height = 'auto';
       }
       } catch (error) {
@@ -137,11 +143,14 @@ const DocumentPreview = ({ document, diffs, title, containerId }) => {
         <div className="p-4">
           <div 
             ref={contentRef}
-            className="word-document-preview bg-white shadow-sm border border-gray-100 rounded-lg p-6"
+            className={`word-document-preview bg-white shadow-sm border border-gray-100 rounded-lg p-6 ${isModifiedWithHighlights ? 'highlighted-document' : ''}`}
             dangerouslySetInnerHTML={{ __html: content || '' }}
             style={{ 
               minHeight: '100%',
-              transition: 'transform 0.2s ease-out'
+              transition: 'transform 0.2s ease-out',
+              width: '100%',
+              boxSizing: 'border-box',
+              overflow: 'visible'
             }}
           />
         </div>
